@@ -21,6 +21,13 @@ type Role struct {
 	RusAs        []string               `json:"run_as,omitempty"`
 }
 
+type ApiKey struct {
+	Name             string                 `json:"-"`
+	RolesDescriptors []string               `json:"role_descriptors,omitempty"`
+	Expiration       string                 `json:"expiration,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+}
+
 type IndexPerms struct {
 	FieldSecurity *FieldSecurity `json:"field_security,omitempty"`
 	Names         []string       `json:"names"`
