@@ -146,3 +146,78 @@ func (a *ApiClient) DeleteElasticsearchRole(rolename string) diag.Diagnostics {
 
 	return diags
 }
+
+func (a *ApiClient) PutElasticsearchApiKey(apikey *models.ApiKey) diag.Diagnostics {
+	var diags diag.Diagnostics
+	apikeyBytes, err := json.Marshal(apikey)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	log.Printf("[TRACE] sending request to ES: %s", apikeyBytes)
+	res, err := a.es.Security.CreateAPIKey(bytes.NewReader(apikeyBytes))
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	defer res.Body.Close()
+	if diags := utils.CheckError(res, "Unable to create or update a apikey"); diags.HasError() {
+		return diags
+	}
+	return diags
+}
+
+func (a *ApiClient) GetElasticsearchApiKey(name string) (*models.ApiKey, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	req := a.es.Security.GetAPIKey.WithName(name)
+	res, err := a.es.Security.GetAPIKey(req)
+	if err != nil {
+		return nil, diag.FromErr(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		diags := append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "Unable to find a apikey in the cluster.",
+			Detail:   fmt.Sprintf("Unable to get apikey: '%s' from the cluster.", name),
+		})
+		return nil, diags
+	}
+	if diags := utils.CheckError(res, "Unable to get a apikey."); diags.HasError() {
+		return nil, diags
+	}
+
+	// unmarshal our response to proper type
+	apikeys := make(map[string]models.ApiKey)
+	if err := json.NewDecoder(res.Body).Decode(&apikeys); err != nil {
+		return nil, diag.FromErr(err)
+	}
+	log.Printf("[TRACE] Fetch apikeys from ES API: %#+v", apikeys)
+
+	if apikey, ok := apikeys[name]; ok {
+		return &apikey, diags
+	}
+
+	diags = append(diags, diag.Diagnostic{
+		Severity: diag.Error,
+		Summary:  "Unable to find a apikey in the cluster",
+		Detail:   fmt.Sprintf(`Unable to find "%s" apikey in the cluster`, name),
+	})
+	return nil, diags
+}
+
+func (a *ApiClient) DeleteElasticsearchApiKey(apikey *models.ApiKey) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	apikeyBytes, err := json.Marshal(apikey)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	res, err := a.es.Security.InvalidateAPIKey(bytes.NewReader(apikeyBytes))
+	if err != nil && res.IsError() {
+		return diag.FromErr(err)
+	}
+	defer res.Body.Close()
+	if diags := utils.CheckError(res, "Unable to delete a apikey"); diags.HasError() {
+		return diags
+	}
+	return diags
+}
