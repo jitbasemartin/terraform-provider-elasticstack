@@ -23,7 +23,7 @@ type Role struct {
 
 type ApiKey struct {
 	Name             string                 `json:"name"`
-	RolesDescriptors []string               `json:"role_descriptors,omitempty"`
+	RolesDescriptors map[string]Role        `json:"role_descriptors,omitempty"`
 	Expiration       string                 `json:"expiration,omitempty"`
 	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }

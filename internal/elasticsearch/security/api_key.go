@@ -33,11 +33,137 @@ func ResourceApiKey() *schema.Resource {
 		},
 		"role_descriptors": {
 			Description: "An array of role descriptors for this API key.",
-			Type:        schema.TypeSet,
+			Type:        schema.TypeMap,
 			Required:    true,
 			MinItems:    1,
-			Elem: &schema.Schema{
-				Type: schema.TypeString,
+			Elem: &schema.Resource{
+				Schema: map[string]*schema.Schema{
+					"name": {
+						Description: "The name of the role.",
+						Type:        schema.TypeString,
+						Required:    true,
+						ForceNew:    true,
+					},
+					"applications": {
+						Description: "A list of application privilege entries.",
+						Type:        schema.TypeSet,
+						Optional:    true,
+						Elem: &schema.Resource{
+							Schema: map[string]*schema.Schema{
+								"application": {
+									Description: "The name of the application to which this entry applies.",
+									Type:        schema.TypeString,
+									Required:    true,
+								},
+								"privileges": {
+									Description: "A list of strings, where each element is the name of an application privilege or action.",
+									Type:        schema.TypeSet,
+									Elem: &schema.Schema{
+										Type: schema.TypeString,
+									},
+									Required: true,
+								},
+								"resources": {
+									Description: "A list resources to which the privileges are applied.",
+									Type:        schema.TypeSet,
+									Elem: &schema.Schema{
+										Type: schema.TypeString,
+									},
+									Required: true,
+								},
+							},
+						},
+					},
+					"global": {
+						Description:      "An object defining global privileges.",
+						Type:             schema.TypeString,
+						Optional:         true,
+						ValidateFunc:     validation.StringIsJSON,
+						DiffSuppressFunc: utils.DiffJsonSuppress,
+					},
+					"cluster": {
+						Description: "A list of cluster privileges. These privileges define the cluster level actions that users with this role are able to execute.",
+						Type:        schema.TypeSet,
+						Elem: &schema.Schema{
+							Type: schema.TypeString,
+						},
+						Optional: true,
+					},
+					"indices": {
+						Description: "A list of indices permissions entries.",
+						Type:        schema.TypeSet,
+						Optional:    true,
+						Elem: &schema.Resource{
+							Schema: map[string]*schema.Schema{
+								"field_security": {
+									Description: "The document fields that the owners of the role have read access to.",
+									Type:        schema.TypeList,
+									Optional:    true,
+									MaxItems:    1,
+									Elem: &schema.Resource{
+										Schema: map[string]*schema.Schema{
+											"grant": {
+												Description: "List of the fields to grant the access to.",
+												Type:        schema.TypeSet,
+												Optional:    true,
+												Elem: &schema.Schema{
+													Type: schema.TypeString,
+												},
+											},
+											"except": {
+												Description: "List of the fields to which the grants will not be applied.",
+												Type:        schema.TypeSet,
+												Optional:    true,
+												Elem: &schema.Schema{
+													Type: schema.TypeString,
+												},
+											},
+										},
+									},
+								},
+								"names": {
+									Description: "A list of indices (or index name patterns) to which the permissions in this entry apply.",
+									Type:        schema.TypeSet,
+									Required:    true,
+									Elem: &schema.Schema{
+										Type: schema.TypeString,
+									},
+								},
+								"privileges": {
+									Description: "The index level privileges that the owners of the role have on the specified indices.",
+									Type:        schema.TypeSet,
+									Required:    true,
+									Elem: &schema.Schema{
+										Type: schema.TypeString,
+									},
+								},
+								"query": {
+									Description:      "A search query that defines the documents the owners of the role have read access to.",
+									Type:             schema.TypeString,
+									ValidateFunc:     validation.StringIsJSON,
+									DiffSuppressFunc: utils.DiffJsonSuppress,
+									Optional:         true,
+								},
+							},
+						},
+					},
+					"metadata": {
+						Description:      "Optional meta-data.",
+						Type:             schema.TypeString,
+						Optional:         true,
+						Computed:         true,
+						ValidateFunc:     validation.StringIsJSON,
+						DiffSuppressFunc: utils.DiffJsonSuppress,
+					},
+					"run_as": {
+						Description: "A list of users that the owners of this role can impersonate.",
+						Type:        schema.TypeSet,
+						Optional:    true,
+						Elem: &schema.Schema{
+							Type: schema.TypeString,
+						},
+					},
+				},
 			},
 		},
 		"expiration": {
@@ -91,13 +217,13 @@ func resourceSecurityApiKeyPut(ctx context.Context, d *schema.ResourceData, meta
 		apikey.Expiration = v.(string)
 	}
 
-	roles := make([]string, 0) //TODO
 	if v, ok := d.GetOk("role_descriptors"); ok {
-		for _, role := range v.(*schema.Set).List() {
-			roles = append(roles, role.(string))
+		role_descriptors := make(map[string]models.Role)
+		if err := json.NewDecoder(strings.NewReader(v.(string))).Decode(&role_descriptors); err != nil {
+			return diag.FromErr(err)
 		}
+		apikey.RolesDescriptors = role_descriptors
 	}
-	apikey.RolesDescriptors = roles
 
 	if v, ok := d.GetOk("metadata"); ok {
 		metadata := make(map[string]interface{})
@@ -127,7 +253,7 @@ func resourceSecurityApiKeyRead(ctx context.Context, d *schema.ResourceData, met
 	}
 	nameId := compId.ResourceId
 
-	apikey, diags := client.GetElasticsearchApiKey(nameId)
+	apikey, diags := client.GetElasticsearchApiKey(nameId) // TODO not return ApiKey model
 	if apikey == nil && diags == nil {
 		d.SetId("")
 		return diags
@@ -145,19 +271,13 @@ func resourceSecurityApiKeyRead(ctx context.Context, d *schema.ResourceData, met
 	if err := d.Set("name", nameId); err != nil {
 		return diag.FromErr(err)
 	}
-	if err := d.Set("email", apikey.Email); err != nil {
+	if err := d.Set("expiration", apikey.Expiration); err != nil {
 		return diag.FromErr(err)
 	}
-	if err := d.Set("full_name", apikey.FullName); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := d.Set("roles", apikey.Roles); err != nil {
+	if err := d.Set("role_descriptors", apikey.RolesDescriptors); err != nil {
 		return diag.FromErr(err)
 	}
 	if err := d.Set("metadata", string(metadata)); err != nil {
-		return diag.FromErr(err)
-	}
-	if err := d.Set("enabled", apikey.Enabled); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -175,7 +295,7 @@ func resourceSecurityApiKeyDelete(ctx context.Context, d *schema.ResourceData, m
 		return diags
 	}
 
-	if diags := client.DeleteElasticsearchApiKey(compId.ResourceId); diags.HasError() {
+	if diags := client.DeleteElasticsearchApiKey(compId.ResourceId); diags.HasError() { // TODO
 		return diags
 	}
 
